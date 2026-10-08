@@ -1,0 +1,59 @@
+service: orders-payments-consumer
+owner: team-orders
+tier: 1
+
+kafka:
+  cluster: main-events
+  topic: payments.succeeded
+  group: payments-main
+  handler: payment_succeeded
+  partitions: 48
+  auto_offset_reset: latest
+  session_timeout: 30s
+  max_poll_records: 200
+  commit:
+    mode: after_handle
+    interval: 1s
+
+processing:
+  concurrency: 16
+  ordering: per_key          # key = user_id
+  processing_timeout: ${PLATFORM_DEFAULT}
+  shutdown_grace: 20s
+
+retry:
+  topic: payments.succeeded.retry
+  max_attempts: 3
+  backoff: ${PLATFORM_DEFAULT}
+  dlq: payments.succeeded.dlq
+
+deploy:
+  replicas:
+    min: 12
+    max: 24
+  resources:
+    cpu: "1"
+    memory: 512Mi
+  autoscaling:
+    metric: consumer_lag
+    target: 5000
+
+dependencies:
+  - name: orders-db
+    kind: postgres
+    pool_size: 16
+  - name: receipts
+    kind: http
+    base_url: http://receipts.fiscal.svc.cluster.local
+  - name: promo-service
+    kind: http
+    base_url: http://promo.marketing.svc.cluster.local
+
+observability:
+  metrics_prefix: payment_consumer
+  tracing: true
+  slo:
+    consumer_lag_seconds: 30
+  alerts:
+    channel: "#orders-alerts"
+    dlq_non_empty: page
